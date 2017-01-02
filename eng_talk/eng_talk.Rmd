@@ -1,6 +1,5 @@
 ---
 title: "Machine Learning Metrics"
-subtitle: "for lenders"
 author: "Stas Sajin"
 date: "04/01/2017"
 output:
@@ -56,14 +55,8 @@ class: left, top
 - Cohen's Kappa
 - Logarithmic Loss
 - Receiver operating characteristic (ROC) curve
-- Area under the (ROC) curve (AUC)
 
 
-##### Regression Metrics
-- Mean Squared Error (MSE)
-- Root mean squared error (RMSE)
-- Mean absolute error (MAE)
-- Root mean squared log error (RMSLE)
 
 This is not a comprehensive list and the easiest way to expand the list is to modify any of the above metrics with weighting or cost schemes. 
 
@@ -117,6 +110,7 @@ We have a small class imbalance issue, where about 20% of the loans represent de
 ### Scenario 3
 
 We have a severe class imbalance issue, where about 1% of the loans represent defaults.
+
 ---
 
 ## The Model
@@ -350,23 +344,19 @@ You can also apply weights to precision and recall.
 
 ---
 
----
-class: middle
-
-#### All the measures described above are considered to not be very good when you have imbalanced data and can be "cheated".
----
-# Enter...
-
-### Matthews correlation coefficient (MCC)
+# Matthews correlation coefficient (MCC)
 
 $$MCC=\frac{TP*TN-FP*FN}{\sqrt{(TP+FP)(TP+FN)(TN+FP)(TN+FN)}}$$
-This looks like a crazy formula, but it's acctually just $\phi$, [the Person's product-moment correlation](http://www.bioinfopublication.org/files/articles/2_1_1_JMLT.pdf){*}. Values close to 1 show perfect agreement. 0 is random guessing. -1 is a model that always predicts the opposite (so it is still good, because random guessing is always the worst case scenario). 
+
+This looks like a crazy formula, but it's acctually just $\phi$, [the Person's product-moment correlation](http://www.bioinfopublication.org/files/articles/2_1_1_JMLT.pdf){*}. You should interpret it like you interpret a correlation coefficient. Values close to 1 show perfect agreement. 0 is random guessing. -1 is a model that always predicts the opposite (so it is still good, because random guessing is always the worst case scenario). 
 
 .footnote[{*} It is common for researchers to reinvent the wheel and call a rose by multiple names]
 
 ---
 
-```{r, echo=FALSE, fig.width= 7, fig.height=4, dev='svg', warning=FALSE, fig.align='center'}
+# MCC
+
+```{r, echo=FALSE, fig.width= 7, fig.height=3.5, dev='svg', warning=FALSE, fig.align='center'}
 plot_df <- plot_df %>%
   mutate_each(funs(as.numeric), fp, fn, tn, tp) %>%
   mutate(mcc = round((tp*tn-fp*fn)/sqrt((tp+fp)*(tp+fn)*(tn+fp)*(tn+fn)),2))
@@ -386,15 +376,165 @@ ggplot(plot_df, aes(x = scenario, y =mcc, fill = scenario)) +
 
 ---
 
-# Cohen's Kappa (my favorite among hard classifier metrics)
+# Cohen's Kappa (you are better than random)
 
 Compares the actual accuracy relative to an expected accuracy that you would observe by chance. The higher the metric, the more impresive is the performance of the classifier relative to randomly guessing the most common class. 
 
 Was originally created to measure inter-rater agreement for qualitative variables.  
 
 $$Kappa = \frac{A_{actual}-A_{expected}}{1-A_{expected}}$$
-$$A_{expected} = {(TP*FN)*(TP*)} $$
+$$A_{expected} = \frac{(TP+FN)(TP+FP)+(FN+TN)(FP+TN)}{N^2} $$
+Notice that the expected accuracy is just a way of adding the weighted marginal probability that you are correct for defaults and the marginal probability that you are correct for non-defaults.
 
+p_marginal(defaults) = (TP+FP)*(TP+FN)/N
+
+---
+
+# Cohen's Kappa (you are better than random)
+
+```{r, echo=FALSE, fig.width= 7, fig.height=3.5, dev='svg', warning=FALSE, fig.align='center'}
+plot_df <- plot_df %>%
+  mutate(a_expected = ((tp+fn)*(tp+fp)+(fn+tn)*(fp+tn))/(tp+fp+tn+fn)^2,
+         kappa = round((accuracy - a_expected)/(1-a_expected),2)) 
+
+ggplot(plot_df, aes(x = scenario, y =kappa, fill = scenario)) +
+    geom_bar(stat = "identity") +
+    geom_text(aes(label = kappa), stat = "identity", vjust = -0.5, size = 12) +
+    theme_bw() +
+    scale_fill_viridis(discrete = TRUE) +
+    scale_y_continuous(limits = c(0, 1), breaks = seq(0, 1, 0.1), labels = seq(0, 1, 0.1)) +
+    labs(title = toupper("MCC for each scenario"),
+         y = toupper("MCC"),
+         x = toupper("Scenario")) +
+    theme(legend.position="none") +
+    theme(text = element_text(size=20))
+```
+
+---
+
+# Logarithmic loss (logloss)
+
+We finally get to use probabilities rather than hard scores.
+
+Defining feature: the error is larger for cases when we are both wrong and are also confident in your predictions. 
+
+$$log loss = -\frac{1}{N}\sum_{i=1}^N {(y_i\log(p_i) + (1 - y_i)\log(1 - p_i))}$$
+
+Function: 
+
+```{r}
+logloss_binary <- function(truth, pred){
+  eps <- 1e-15
+  pred <- pmin(pmax(pred, eps), 1 - eps)
+  -sum(truth * log(pred) + (1 - truth) * log(1 - pred))/length(truth)
+}
+```
+
+
+---
+# Examples
+
+```{r}
+guessing <- logloss_binary(1, 0.5)
+confident_correct <-logloss_binary(1, 0.9)
+confident_inccorect<-logloss_binary(1, 0.1)
+c(guessing, confident_correct, confident_inccorect)
+```
+
+
+---
+
+background-image: url(http://www.exegetic.biz/blog/wp-content/uploads/2015/12/log-loss-curve.png)
+
+---
+
+# Logloss
+
+```{r, echo=FALSE, fig.width= 7, fig.height=3.5, dev='svg', warning=FALSE, fig.align='center'}
+plot_df2 <- data_with_pred %>%
+  mutate(Class = as.numeric(ifelse(Class == "Class1", 1, 0))) %>%
+  group_by(scenario) %>%
+  summarise(logloss = round(logloss_binary(Class, Class1),2))
+
+ggplot(plot_df2, aes(x = scenario, y =logloss, fill = scenario)) +
+    geom_bar(stat = "identity") +
+    geom_text(aes(label = logloss), stat = "identity", vjust = -0.5, size = 12) +
+    theme_bw() +
+    scale_fill_viridis(discrete = TRUE) +
+    scale_y_continuous(limits = c(0, 1), breaks = seq(0, 1, 0.1), labels = seq(0, 1, 0.1)) +
+    labs(title = toupper("MCC for each scenario"),
+         y = toupper("MCC"),
+         x = toupper("Scenario")) +
+    theme(legend.position="none") +
+    theme(text = element_text(size=20))
+```
+
+---
+
+# ROC Curve
+
+Definition: Reciever Operating Characteristic Curve doesn't really provide you with one number that you can use for your classifier, but rather provides with a way to get to an "infinetly" large number of classifiers. The ROC curve shows the tradeoffs between true hits and false alarms.
+
+The ROC curves have two advantages: 1) they combine measures (e.g., true hits and false alarms) and 2) they don't care about the composition of the outcome (which can also be a disadvantage). 
+
+```
+binary_roc <- function(outcomes, scores){
+  outcomes <- outcomes[order(scores, decreasing=TRUE)]
+  data.frame(TPR=cumsum(outcomes)/sum(outcomes),
+             FPR=cumsum(!outcomes)/sum(!outcomes), outcomes)
+}
+```
+
+---
+
+# ROC
+
+```{r, echo=FALSE, fig.width= 7, fig.height=5.0, dev='svg', warning=FALSE, fig.align='bottom', message=FALSE}
+plot_df2 <- data_with_pred %>%
+  group_by(scenario) %>%
+  arrange(desc(Class1)) %>%
+  mutate(Class = ifelse(Class == "Class1", TRUE, FALSE)) %>%
+  mutate(sensitivity = cumsum(Class)/sum(Class),
+         specificity = cumsum(!Class)/sum(!Class))
+
+plot_df2 <- plot_df2 %>%
+  group_by(scenario) %>%
+  arrange(desc(Class1))
+
+p1 <- ggplot(plot_df2, aes(x = specificity, y = sensitivity, color = scenario)) +
+  geom_line(size = 2) +
+  theme_bw() +
+  scale_y_continuous(breaks = seq(0, 1, 0.1),
+                     labels = seq(0, 1, 0.1)) +
+  scale_x_continuous(breaks = seq(0, 1, 0.1),
+                     labels = seq(0, 1, 0.1)) +
+  scale_color_viridis(discrete = TRUE) +
+  labs(title = toupper("ROC curves for each scenario"),
+         y = toupper("Sensitivity (aka, Recall, TPR, Hit Rate)"),
+         x = toupper("1- Specificity (aka, False Alarm)")) +
+    theme(text = element_text(size=16)) +
+  geom_abline(slope = 1, intercept = 0)
+
+#library(plotly)
+p1
+```
+
+---
+
+# What about Area Under the Curve (AUC)? 
+
+AUC is useful for understanding which classifer generally performs better, but it is useless when it comes to guiding decisions about thresholds we should pick. 
+---
+
+# Summary
+
+- It is usually a good starting point to ask for the ROC curves when dealing with classifiers, since ROC curves provide you immediately with lots of information about false alarms and true hits and the trade-offs between the two.
+
+- If you are given accuracy measures, always ask about the composition of the outcome ("Is the outcome balanced?").
+
+- You can also combine measures. For instance, you can optimize to lower the logloss error and then plot the ROC curves to select your thresholds (this is acctually what has been done with the auto-decline model). 
+
+---
 # Thanks!
 
 .footnote[ 
