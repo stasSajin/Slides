@@ -1,0 +1,544 @@
+---
+title: "Machine Learning Metrics"
+author: "Stas Sajin"
+date: "04/01/2017"
+output:
+  xaringan::moon_reader:
+    self_contained: TRUE
+    lib_dir: libs
+    nature:
+      highlightStyle: github
+      highlightLines: true
+---
+
+```{r setup, include=FALSE}
+options(htmltools.dir.version = FALSE)
+```
+
+class: left, top
+
+# Goals:
+
+### 1. How do you know that a model works?
+### 2. Ask the right/weird/uncomfortable questions.
+
+---
+## Ask the right/weird/uncomfortable questions
+
+#### Example of model bias and flexibility:
+
+.top[![50](https://static01.nyt.com/images/2016/09/08/upshot/arizona-election-forecast-1473366534539/arizona-election-forecast-1473366534539-videoSixteenByNineJumbo1600.png)]
+
+- use data that is biased 
+
+  * throwing away data that has missing values
+
+  * putting more weight on data that you "feel" should have more weight
+
+- being a tryhard
+  
+  * trying hard to look for a particular outcome without checks in place, to the point where it leads to overfitting.
+---
+
+class: left, top
+
+### Outline:
+
+##### Classification Metrics
+
+- Accuracy
+- Sensitivity (i.e., recall)
+- Specificity 
+- Positive Predictive Value (i.e., precision)
+- F1
+- Matthew's correlation coefficient (MCC)
+- Cohen's Kappa
+- Logarithmic Loss
+- Receiver operating characteristic (ROC) curve
+
+
+
+This is not a comprehensive list and the easiest way to expand the list is to modify any of the above metrics with weighting or cost schemes. 
+
+---
+class: left
+
+# The Setting
+
+You finally decide to invest your money through one of the P2P lending platforms. One thing you are worried about is defaults, so you decide to built a model for predicting who is going to default based on information provided in the loan listing.
+
+
+---
+# Data
+
+General Fake Data Information:
+* 10000 observations
+* 5 noise predictors and 13 real predictors (a combination of linear and nonlinear predictors)
+
+```{r, echo=FALSE, fig.width= 7, fig.height=4, dev='svg', warning=FALSE, fig.align='center'}
+# generate the random data
+pacman::p_load(dplyr, ggplot2, caret, tidyr, purrr, viridis)
+set.seed(123)
+training <- twoClassSim(n = 10000, noiseVars = 5, corrValue = .8, linearVars = 5) 
+levels(training$Class) <- c("default", "non-default")
+
+# plot a sample dataset that shows the relationship between a noise variable, a twofactor variable a linear variable, and a non-linear variable.
+plot_df <- training %>% select(TwoFactor1, TwoFactor2, Linear3, Linear2, Nonlinear3, Noise3, Class)
+colnames(plot_df) <- c("Real or Not1?", "Real or Not2?", "Real or Not3?", "Real or Not4?",
+                       "Real or Not5?", "Real or Not6?", "Outcome")
+plot_df <- gather(plot_df, key = predictor, value = value, -Outcome)
+
+# examine the distributions for each variable
+ggplot(plot_df, aes(x = value, color = Outcome)) + 
+  geom_density() + 
+  facet_wrap(~predictor) +
+  theme_bw() +
+  labs(title = "Which of the following looks like a real predictor to you?")
+```
+
+---
+# Scenarios
+
+### Scenario 1
+
+We don't have class imbalance in our data. About 50% of observations are defaults.
+
+### Scenario 2
+
+We have a small class imbalance issue, where about 20% of the loans represent defaults
+
+### Scenario 3
+
+We have a severe class imbalance issue, where about 1% of the loans represent defaults.
+
+---
+
+## The Model
+
+- The model we use is irrelevant. For our purposes, we will be using decision trees. 
+
+- We also ignore common checks for model evaluation. 
+
+```{r, echo = FALSE}
+# create data for the 3 scenarios
+scenario1 <- twoClassSim(n = 10000, noiseVars = 5,
+                                 corrValue = .8, linearVars = 5, intercept = -4) 
+scenario1$scenario <- "scenario1"
+scenario2 <- twoClassSim(n = 10000, noiseVars = 5,
+                                     corrValue = .8, linearVars = 5, intercept = 1.7) 
+scenario2$scenario <- "scenario2"
+scenario3 <- twoClassSim(n = 10000, noiseVars = 5,
+                                    corrValue = .8, linearVars = 5,
+                                    intercept = 13) 
+scenario3$scenario <- "scenario3"
+
+#table(scenario1$Class)/nrow(scenario1)
+#table(scenario2$Class)/nrow(scenario2)
+#table(scenario3$Class)/nrow(scenario3)
+data <- rbind(scenario1, scenario2, scenario3)
+
+by_scenario <- data %>%
+  group_by(scenario) %>%
+  nest()
+
+# function to be used in modeling
+rpart_model <- function(df){
+  rpart::rpart(Class ~ ., data = df)
+}
+
+# apply the model to every scenario
+by_scenario <- by_scenario %>%
+  mutate(model = map(data, rpart_model))
+
+# add predictions 
+by_scenario <- by_scenario %>%
+  ungroup() %>%
+  mutate(predictions = map(model, predict),
+         predictions = map(predictions, as.data.frame))
+
+data_with_pred <- by_scenario %>% unnest(predictions)
+data_with_pred$Class <- data$Class
+
+# generate A, B, C, D columns
+data_with_pred <- data_with_pred %>%
+  mutate(Outcome =
+           case_when(
+             .$Class1 >= .5 & .$Class == "Class1" ~ "true_positive",
+             .$Class1 >= .5 & .$Class == "Class2" ~ "false_positive",
+             .$Class1 < .5 & .$Class == "Class1" ~ "false_negative",
+             .$Class1 < .5 & .$Class == "Class2" ~ "true_negative"))
+```
+
+---
+
+# Accuracy
+
+Definition: Measures the proportion of occurences that you got right
+
+              Reference	
+    Predicted	default	non-default
+       default	 TP	    FP
+    non-default	FN	    TN
+
+- TP = True Positives
+- FP = False Positives (false alarm)
+- FN = False Negatives (misses)
+- TN = True Negatives
+
+##### Formula:
+
+$$Accuracy = \frac{(TP+TN)}{(TP+FP+FN+TN)}$$
+---
+
+# Accuracy
+
+```{r, echo=FALSE, fig.width= 7, fig.height=4, dev='svg', warning=FALSE, fig.align='center'}
+# calculate accuracy for each scenario and plot it
+plot_df <- data_with_pred %>%
+  group_by(scenario) %>%
+  summarise(fp = sum(Outcome == "false_positive"),
+            fn = sum(Outcome == "false_negative"),
+            tn = sum(Outcome == "true_negative"),
+            tp = sum(Outcome == "true_positive")) %>%
+  mutate(accuracy = (tp+tn)/(tp+tn+fp+fn))
+
+ggplot(plot_df, aes(x = scenario, y =accuracy, fill = scenario)) +
+    geom_bar(stat = "identity") +
+    geom_text(aes(label = accuracy), stat = "identity", vjust = -0.5, size = 12) +
+    theme_bw() +
+    scale_fill_viridis(discrete = TRUE) +
+    scale_y_continuous(limits = c(0, 1.2), breaks = seq(0, 1, 0.1), labels = seq(0, 1, 0.1)) +
+    labs(title = toupper("Accuracy for each scenario"),
+         y = toupper("Accuracy"),
+         x = toupper("Scenario")) +
+    theme(legend.position="none") +
+    theme(text = element_text(size=20))
+```
+
+---
+
+## Sensitivity (aka Recall, TPR, hit rate)
+
+Definition: How many defaulters have you identified out of all the people that have acctually defaulted?
+
+Formula:
+
+$$Sensitivity = \frac{TP}{TP+FN} = \frac{\text{number of true positives}}{\text{total number of actual defaults }}$$
+
+```{r, echo=FALSE, fig.width= 7, fig.height=3.5, dev='svg', warning=FALSE, fig.align='top'}
+plot_df <- plot_df %>%
+  mutate(sens = round(tp/(tp+fn),2))
+
+ggplot(plot_df, aes(x = scenario, y =sens, fill = scenario)) +
+    geom_bar(stat = "identity") +
+    geom_text(aes(label = sens), stat = "identity", vjust = -0.5, size = 12) +
+    theme_bw() +
+    scale_fill_viridis(discrete = TRUE) +
+    scale_y_continuous(limits = c(0, 1.2), breaks = seq(0, 1, 0.1), labels = seq(0, 1, 0.1)) +
+    labs(title = toupper("Sensitivity for each scenario"),
+         y = toupper("Sensitivity"),
+         x = toupper("Scenario")) +
+    theme(legend.position="none") +
+    theme(text = element_text(size=20))
+```
+
+---
+
+## Sensitivity (aka Recall, TPR, hit rate)
+
+Do you think a lender should optimize for this metric? How can you achieve perfect scores on this metric?
+
+???
+A model can maximize this metric by scoring everybody as a default case.
+
+---
+
+## Likewise, Specificity (TNR)
+
+Definition: Out of all the non-defaults, how many have you identified correctly as non-defaults? Esentially, you look at rate rate of false alarms.
+
+Formula: 
+
+$$Specificity = \frac{TN}{TN+FP} = \frac{\text{number of true negatives}}{\text{total number of actual non-defaults}}$$
+```{r, echo=FALSE, fig.width= 7, fig.height=3.5, dev='svg', warning=FALSE, fig.align='center'}
+plot_df <- plot_df %>%
+  mutate(speci = round(tn/(tn+fp),2))
+
+ggplot(plot_df, aes(x = scenario, y =speci, fill = scenario)) +
+    geom_bar(stat = "identity") +
+    geom_text(aes(label = speci), stat = "identity", vjust = -0.5, size = 12) +
+    theme_bw() +
+    scale_fill_viridis(discrete = TRUE) +
+    scale_y_continuous(limits = c(0, 1.2), breaks = seq(0, 1, 0.1), labels = seq(0, 1, 0.1)) +
+    labs(title = toupper("Specificity for each scenario"),
+         y = toupper("Specificity"),
+         x = toupper("Scenario")) +
+    theme(legend.position="none") +
+    theme(text = element_text(size=20))
+```
+
+Is this good or bad?
+
+???
+A model can maximize this metric by scoring everyone as a non-default case. This test answer how good is one at avoiding false alarms.
+
+---
+
+### Precision (i.e., the land of grasped opportunities; aka, Positive Predictive Value)
+
+Definition: Out of all the observations that you scored as defaults, how many have acctually defaulted?
+
+Formula: 
+
+$$Precision = \frac{TP}{TP+FP} = \frac{\text{number of positive defaults}}{\text{total number of predicted defaults}}$$
+
+```{r, echo=FALSE, fig.width= 7, fig.height=3.5, dev='svg', warning=FALSE, fig.align='center'}
+plot_df <- plot_df %>%
+  mutate(precision = round(tp/(tp+fp),2))
+
+ggplot(plot_df, aes(x = scenario, y =precision, fill = scenario)) +
+    geom_bar(stat = "identity") +
+    geom_text(aes(label = precision), stat = "identity", vjust = -0.5, size = 12) +
+    theme_bw() +
+    scale_fill_viridis(discrete = TRUE) +
+    scale_y_continuous(limits = c(0, 1.2), breaks = seq(0, 1, 0.1), labels = seq(0, 1, 0.1)) +
+    labs(title = toupper("Specificity for each scenario"),
+         y = toupper("Specificity"),
+         x = toupper("Scenario")) +
+    theme(legend.position="none") +
+    theme(text = element_text(size=20))
+```
+
+Is this good or bad?
+
+???
+A model can maximize this metric by scoring everyone as a non-default case. This test can answer how good is one at avoiding false alarms.
+
+---
+
+### F1 (harmonic mean between precision and recall)
+
+Formula: 
+
+$$F1 = 2\frac{Precision*Recall}{Precision+Recall}$$
+
+
+```{r, echo=FALSE, fig.width= 7, fig.height=4, dev='svg', warning=FALSE, fig.align='center'}
+plot_df <- plot_df %>%
+  mutate(F1 = round(2*precision*sens/(precision+sens),2))
+
+ggplot(plot_df, aes(x = scenario, y =F1, fill = scenario)) +
+    geom_bar(stat = "identity") +
+    geom_text(aes(label = F1), stat = "identity", vjust = -0.5, size = 12) +
+    theme_bw() +
+    scale_fill_viridis(discrete = TRUE) +
+    scale_y_continuous(limits = c(0, 1.2), breaks = seq(0, 1, 0.1), labels = seq(0, 1, 0.1)) +
+    labs(title = toupper("F1 for each scenario"),
+         y = toupper("F1"),
+         x = toupper("Scenario")) +
+    theme(legend.position="none") +
+    theme(text = element_text(size=20))
+```
+
+You can also apply weights to precision and recall.
+
+---
+
+# Matthews correlation coefficient (MCC)
+
+$$MCC=\frac{TP*TN-FP*FN}{\sqrt{(TP+FP)(TP+FN)(TN+FP)(TN+FN)}}$$
+
+This looks like a crazy formula, but it's acctually just $\phi$, [the Person's product-moment correlation](http://www.bioinfopublication.org/files/articles/2_1_1_JMLT.pdf){*}. You should interpret it like you interpret a correlation coefficient. Values close to 1 show perfect agreement. 0 is random guessing. -1 is a model that always predicts the opposite (so it is still good, because random guessing is always the worst case scenario). 
+
+.footnote[{*} It is common for researchers to reinvent the wheel and call a rose by multiple names]
+
+---
+
+# MCC
+
+```{r, echo=FALSE, fig.width= 7, fig.height=3.5, dev='svg', warning=FALSE, fig.align='center'}
+plot_df <- plot_df %>%
+  mutate_each(funs(as.numeric), fp, fn, tn, tp) %>%
+  mutate(mcc = round((tp*tn-fp*fn)/sqrt((tp+fp)*(tp+fn)*(tn+fp)*(tn+fn)),2))
+
+ggplot(plot_df, aes(x = scenario, y =mcc, fill = scenario)) +
+    geom_bar(stat = "identity") +
+    geom_text(aes(label = mcc), stat = "identity", vjust = -0.5, size = 12) +
+    theme_bw() +
+    scale_fill_viridis(discrete = TRUE) +
+    scale_y_continuous(limits = c(0, 1), breaks = seq(0, 1, 0.1), labels = seq(0, 1, 0.1)) +
+    labs(title = toupper("MCC for each scenario"),
+         y = toupper("MCC"),
+         x = toupper("Scenario")) +
+    theme(legend.position="none") +
+    theme(text = element_text(size=20))
+```
+
+---
+
+# Cohen's Kappa (you are better than random)
+
+Compares the actual accuracy relative to an expected accuracy that you would observe by chance. The higher the metric, the more impresive is the performance of the classifier relative to randomly guessing the most common class. 
+
+Was originally created to measure inter-rater agreement for qualitative variables.  
+
+$$Kappa = \frac{A_{actual}-A_{expected}}{1-A_{expected}}$$
+$$A_{expected} = \frac{(TP+FN)(TP+FP)+(FN+TN)(FP+TN)}{N^2} $$
+Notice that the expected accuracy is just a way of adding the weighted marginal probability that you are correct for defaults and the marginal probability that you are correct for non-defaults.
+
+p_marginal(defaults) = (TP+FP)*(TP+FN)/N
+
+---
+
+# Cohen's Kappa (you are better than random)
+
+```{r, echo=FALSE, fig.width= 7, fig.height=3.5, dev='svg', warning=FALSE, fig.align='center'}
+plot_df <- plot_df %>%
+  mutate(a_expected = ((tp+fn)*(tp+fp)+(fn+tn)*(fp+tn))/(tp+fp+tn+fn)^2,
+         kappa = round((accuracy - a_expected)/(1-a_expected),2)) 
+
+ggplot(plot_df, aes(x = scenario, y =kappa, fill = scenario)) +
+    geom_bar(stat = "identity") +
+    geom_text(aes(label = kappa), stat = "identity", vjust = -0.5, size = 12) +
+    theme_bw() +
+    scale_fill_viridis(discrete = TRUE) +
+    scale_y_continuous(limits = c(0, 1), breaks = seq(0, 1, 0.1), labels = seq(0, 1, 0.1)) +
+    labs(title = toupper("MCC for each scenario"),
+         y = toupper("MCC"),
+         x = toupper("Scenario")) +
+    theme(legend.position="none") +
+    theme(text = element_text(size=20))
+```
+
+---
+
+# Logarithmic loss (logloss)
+
+We finally get to use probabilities rather than hard scores.
+
+Defining feature: the error is larger for cases when we are both wrong and are also confident in your predictions. 
+
+$$log loss = -\frac{1}{N}\sum_{i=1}^N {(y_i\log(p_i) + (1 - y_i)\log(1 - p_i))}$$
+
+Function: 
+
+```{r}
+logloss_binary <- function(truth, pred){
+  eps <- 1e-15
+  pred <- pmin(pmax(pred, eps), 1 - eps)
+  -sum(truth * log(pred) + (1 - truth) * log(1 - pred))/length(truth)
+}
+```
+
+
+---
+# Examples
+
+```{r}
+guessing <- logloss_binary(1, 0.5)
+confident_correct <-logloss_binary(1, 0.9)
+confident_inccorect<-logloss_binary(1, 0.1)
+c(guessing, confident_correct, confident_inccorect)
+```
+
+
+---
+
+background-image: url(http://www.exegetic.biz/blog/wp-content/uploads/2015/12/log-loss-curve.png)
+
+---
+
+# Logloss
+
+```{r, echo=FALSE, fig.width= 7, fig.height=3.5, dev='svg', warning=FALSE, fig.align='center'}
+plot_df2 <- data_with_pred %>%
+  mutate(Class = as.numeric(ifelse(Class == "Class1", 1, 0))) %>%
+  group_by(scenario) %>%
+  summarise(logloss = round(logloss_binary(Class, Class1),2))
+
+ggplot(plot_df2, aes(x = scenario, y =logloss, fill = scenario)) +
+    geom_bar(stat = "identity") +
+    geom_text(aes(label = logloss), stat = "identity", vjust = -0.5, size = 12) +
+    theme_bw() +
+    scale_fill_viridis(discrete = TRUE) +
+    scale_y_continuous(limits = c(0, 1), breaks = seq(0, 1, 0.1), labels = seq(0, 1, 0.1)) +
+    labs(title = toupper("MCC for each scenario"),
+         y = toupper("MCC"),
+         x = toupper("Scenario")) +
+    theme(legend.position="none") +
+    theme(text = element_text(size=20))
+```
+
+---
+
+# ROC Curve
+
+Definition: Reciever Operating Characteristic Curve doesn't really provide you with one number that you can use for your classifier, but rather provides with a way to get to an "infinetly" large number of classifiers. The ROC curve shows the tradeoffs between true hits and false alarms.
+
+The ROC curves have two advantages: 1) they combine measures (e.g., true hits and false alarms) and 2) they don't care about the composition of the outcome (which can also be a disadvantage). 
+
+```
+binary_roc <- function(outcomes, scores){
+  outcomes <- outcomes[order(scores, decreasing=TRUE)]
+  data.frame(TPR=cumsum(outcomes)/sum(outcomes),
+             FPR=cumsum(!outcomes)/sum(!outcomes), outcomes)
+}
+```
+
+---
+
+# ROC
+
+```{r, echo=FALSE, fig.width= 7, fig.height=5.0, dev='svg', warning=FALSE, fig.align='bottom', message=FALSE}
+plot_df2 <- data_with_pred %>%
+  group_by(scenario) %>%
+  arrange(desc(Class1)) %>%
+  mutate(Class = ifelse(Class == "Class1", TRUE, FALSE)) %>%
+  mutate(sensitivity = cumsum(Class)/sum(Class),
+         specificity = cumsum(!Class)/sum(!Class))
+
+plot_df2 <- plot_df2 %>%
+  group_by(scenario) %>%
+  arrange(desc(Class1))
+
+p1 <- ggplot(plot_df2, aes(x = specificity, y = sensitivity, color = scenario)) +
+  geom_line(size = 2) +
+  theme_bw() +
+  scale_y_continuous(breaks = seq(0, 1, 0.1),
+                     labels = seq(0, 1, 0.1)) +
+  scale_x_continuous(breaks = seq(0, 1, 0.1),
+                     labels = seq(0, 1, 0.1)) +
+  scale_color_viridis(discrete = TRUE) +
+  labs(title = toupper("ROC curves for each scenario"),
+         y = toupper("Sensitivity (aka, Recall, TPR, Hit Rate)"),
+         x = toupper("1- Specificity (aka, False Alarm)")) +
+    theme(text = element_text(size=16)) +
+  geom_abline(slope = 1, intercept = 0)
+
+#library(plotly)
+p1
+```
+
+---
+
+# What about Area Under the Curve (AUC)? 
+
+AUC is useful for understanding which classifer generally performs better, but it is useless when it comes to guiding decisions about thresholds we should pick. 
+---
+
+# Summary
+
+- It is usually a good starting point to ask for the ROC curves when dealing with classifiers, since ROC curves provide you immediately with lots of information about false alarms and true hits and the trade-offs between the two.
+
+- If you are given accuracy measures, always ask about the composition of the outcome ("Is the outcome balanced?").
+
+- You can also combine measures. For instance, you can optimize to lower the logloss error and then plot the ROC curves to select your thresholds (this is acctually what has been done with the auto-decline model). 
+
+---
+# Thanks!
+
+.footnote[ 
+1. Slides were creaed via [**xaringan**](https://github.com/yihui/xaringan), by using [remark.js](https://remarkjs.com), [**knitr**](http://yihui.name/knitr), and [R Markdown](https://rmarkdown.rstudio.com)
+
+2. You can access the slides on the following github [link](https://github.com/stasSajin/Slides).]
+
