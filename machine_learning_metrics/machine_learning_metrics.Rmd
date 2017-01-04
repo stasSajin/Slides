@@ -75,7 +75,7 @@ General Fake Data Information:
 * 10000 observations
 * 5 noise predictors and 13 real predictors (a combination of linear and nonlinear predictors)
 
-```{r, echo=FALSE, fig.width= 7, fig.height=4, dev='svg', warning=FALSE, fig.align='center'}
+```{r, echo=FALSE, fig.width= 10, fig.height=5, dev='svg', warning=FALSE, fig.align='center'}
 # generate the random data
 pacman::p_load(dplyr, ggplot2, caret, tidyr, purrr, viridis)
 set.seed(123)
@@ -99,17 +99,16 @@ ggplot(plot_df, aes(x = value, color = Outcome)) +
 ---
 # Scenarios
 
-### Scenario 1
-
+##### Scenario 1
 We don't have class imbalance in our data. About 50% of observations are defaults.
-
-### Scenario 2
-
+##### Scenario 2
 We have a small class imbalance issue, where about 20% of the loans represent defaults
-
-### Scenario 3
-
+##### Scenario 3
 We have a severe class imbalance issue, where about 1% of the loans represent defaults.
+##### Scenario 4
+We have only noise predictors. 50/50 outcome distribution
+##### Scenario 5
+We have only noise predictors. 1/99 outcome distribution.
 
 ---
 
@@ -132,9 +131,23 @@ scenario3 <- twoClassSim(n = 10000, noiseVars = 5,
                                     intercept = 13) 
 scenario3$scenario <- "scenario3"
 
-#table(scenario1$Class)/nrow(scenario1)
-#table(scenario2$Class)/nrow(scenario2)
-#table(scenario3$Class)/nrow(scenario3)
+# generate scenario 4 with 50/50 class balance, using 20 random predictors
+scenario4 <- twoClassSim(n = 10000, noiseVars = 20,
+                                 corrValue = .8, linearVars = 1, intercept = -4) %>%
+  select(Class, starts_with("Noise")) %>%
+  mutate(scenario = "scenario4")
+
+# generate scenario 5 with about 99/1 class imbalance, using 20 random predictors
+scenario5 <- twoClassSim(n = 10000, noiseVars = 20,
+                                 corrValue = .8, linearVars = 1, intercept = 12) %>%
+  select(Class, starts_with("Noise")) %>%
+  mutate(scenario = "scenario5")
+
+# table(scenario1$Class)/nrow(scenario1)
+# table(scenario2$Class)/nrow(scenario2)
+# table(scenario3$Class)/nrow(scenario3)
+# table(scenario4$Class)/nrow(scenario4)
+# table(scenario5$Class)/nrow(scenario5)
 data <- rbind(scenario1, scenario2, scenario3)
 
 by_scenario <- data %>%
@@ -157,6 +170,23 @@ by_scenario <- by_scenario %>%
          predictions = map(predictions, as.data.frame))
 
 data_with_pred <- by_scenario %>% unnest(predictions)
+
+# generate models for scenario 4 and 5
+scenario4_model <- rpart_model(scenario4)
+scenario5_model <- rpart_model(scenario5)
+
+scenario4_predictions <- predict(scenario4_model, scenario4) %>% as.data.frame() %>%
+  mutate(scenario = "scenario4")
+
+scenario5_predictions <- predict(scenario5_model, scenario5) %>% as.data.frame() %>%
+  mutate(scenario = "scenario5")
+
+data_with_pred <- rbind(data_with_pred, scenario4_predictions, scenario5_predictions)
+scenario4 <- select(scenario4, Class)
+scenario5 <- select(scenario5, Class)
+data <- select(data, Class)
+data <- rbind(data, scenario4, scenario5)
+
 data_with_pred$Class <- data$Class
 
 # generate A, B, C, D columns
@@ -190,9 +220,7 @@ Definition: Measures the proportion of occurences that you got right
 $$Accuracy = \frac{(TP+TN)}{(TP+FP+FN+TN)}$$
 ---
 
-# Accuracy
-
-```{r, echo=FALSE, fig.width= 7, fig.height=4, dev='svg', warning=FALSE, fig.align='center'}
+```{r, echo=FALSE, fig.width= 9, fig.height=6.5, dev='svg', warning=FALSE, fig.align='center'}
 # calculate accuracy for each scenario and plot it
 plot_df <- data_with_pred %>%
   group_by(scenario) %>%
@@ -206,12 +234,18 @@ ggplot(plot_df, aes(x = scenario, y =accuracy, fill = scenario)) +
     geom_bar(stat = "identity") +
     geom_text(aes(label = accuracy), stat = "identity", vjust = -0.5, size = 12) +
     theme_bw() +
-    scale_fill_viridis(discrete = TRUE) +
+    scale_fill_viridis(discrete = TRUE,
+                       name="",
+                       breaks=c("scenario1", "scenario2", "scenario3", "scenario4", "scenario5"),
+                       labels=c("Scenario 1: Real signal, 50/50", "Scenario 2: Real signal, 20/80",
+                                "Scenario 3: Real signal, 1/99", "Scenario 4: Noise, 50/50",
+                                "Scenario 5: Noise, 1/99")) +
     scale_y_continuous(limits = c(0, 1.2), breaks = seq(0, 1, 0.1), labels = seq(0, 1, 0.1)) +
     labs(title = toupper("Accuracy for each scenario"),
          y = toupper("Accuracy"),
          x = toupper("Scenario")) +
-    theme(legend.position="none") +
+    theme(legend.position = "bottom") +
+    guides(fill = guide_legend(nrow=3, byrow=TRUE)) +
     theme(text = element_text(size=20))
 ```
 
@@ -224,8 +258,9 @@ Definition: How many defaulters have you identified out of all the people that h
 Formula:
 
 $$Sensitivity = \frac{TP}{TP+FN} = \frac{\text{number of true positives}}{\text{total number of actual defaults }}$$
+---
 
-```{r, echo=FALSE, fig.width= 7, fig.height=3.5, dev='svg', warning=FALSE, fig.align='top'}
+```{r, echo=FALSE, fig.width= 9, fig.height=6.5, dev='svg', warning=FALSE, fig.align='center'}
 plot_df <- plot_df %>%
   mutate(sens = round(tp/(tp+fn),2))
 
@@ -233,12 +268,18 @@ ggplot(plot_df, aes(x = scenario, y =sens, fill = scenario)) +
     geom_bar(stat = "identity") +
     geom_text(aes(label = sens), stat = "identity", vjust = -0.5, size = 12) +
     theme_bw() +
-    scale_fill_viridis(discrete = TRUE) +
+    scale_fill_viridis(discrete = TRUE,
+                       name="",
+                       breaks=c("scenario1", "scenario2", "scenario3", "scenario4", "scenario5"),
+                       labels=c("Scenario 1: Real signal, 50/50", "Scenario 2: Real signal, 20/80",
+                                "Scenario 3: Real signal, 1/99", "Scenario 4: Noise, 50/50",
+                                "Scenario 5: Noise, 1/99")) +
+    theme(legend.position = "bottom") +
+    guides(fill = guide_legend(nrow=3, byrow=TRUE)) +
     scale_y_continuous(limits = c(0, 1.2), breaks = seq(0, 1, 0.1), labels = seq(0, 1, 0.1)) +
     labs(title = toupper("Sensitivity for each scenario"),
          y = toupper("Sensitivity"),
          x = toupper("Scenario")) +
-    theme(legend.position="none") +
     theme(text = element_text(size=20))
 ```
 
@@ -260,7 +301,9 @@ Definition: Out of all the non-defaults, how many have you identified correctly 
 Formula: 
 
 $$Specificity = \frac{TN}{TN+FP} = \frac{\text{number of true negatives}}{\text{total number of actual non-defaults}}$$
-```{r, echo=FALSE, fig.width= 7, fig.height=3.5, dev='svg', warning=FALSE, fig.align='center'}
+---
+
+```{r, echo=FALSE, fig.width= 9, fig.height=6.5, dev='svg', warning=FALSE, fig.align='center'}
 plot_df <- plot_df %>%
   mutate(speci = round(tn/(tn+fp),2))
 
@@ -268,12 +311,18 @@ ggplot(plot_df, aes(x = scenario, y =speci, fill = scenario)) +
     geom_bar(stat = "identity") +
     geom_text(aes(label = speci), stat = "identity", vjust = -0.5, size = 12) +
     theme_bw() +
-    scale_fill_viridis(discrete = TRUE) +
+    scale_fill_viridis(discrete = TRUE,
+                       name="Scenario:",
+                       breaks=c("scenario1", "scenario2", "scenario3", "scenario4", "scenario5"),
+                       labels=c("Scenario 1: Real signal, 50/50", "Scenario 2: Real signal, 20/80",
+                                "Scenario 3: Real signal, 1/99", "Scenario 4: Noise, 50/50",
+                                "Scenario 5: Noise, 1/99")) +
+    theme(legend.position = "bottom") +
+    guides(fill = guide_legend(nrow=3, byrow=TRUE)) +
     scale_y_continuous(limits = c(0, 1.2), breaks = seq(0, 1, 0.1), labels = seq(0, 1, 0.1)) +
     labs(title = toupper("Specificity for each scenario"),
          y = toupper("Specificity"),
          x = toupper("Scenario")) +
-    theme(legend.position="none") +
     theme(text = element_text(size=20))
 ```
 
@@ -291,8 +340,9 @@ Definition: Out of all the observations that you scored as defaults, how many ha
 Formula: 
 
 $$Precision = \frac{TP}{TP+FP} = \frac{\text{number of positive defaults}}{\text{total number of predicted defaults}}$$
+---
 
-```{r, echo=FALSE, fig.width= 7, fig.height=3.5, dev='svg', warning=FALSE, fig.align='center'}
+```{r, echo=FALSE, fig.width= 9, fig.height=6.5, dev='svg', warning=FALSE, fig.align='center'}
 plot_df <- plot_df %>%
   mutate(precision = round(tp/(tp+fp),2))
 
@@ -300,12 +350,18 @@ ggplot(plot_df, aes(x = scenario, y =precision, fill = scenario)) +
     geom_bar(stat = "identity") +
     geom_text(aes(label = precision), stat = "identity", vjust = -0.5, size = 12) +
     theme_bw() +
-    scale_fill_viridis(discrete = TRUE) +
+    scale_fill_viridis(discrete = TRUE,
+                       name="",
+                       breaks=c("scenario1", "scenario2", "scenario3", "scenario4", "scenario5"),
+                       labels=c("Scenario 1: Real signal, 50/50", "Scenario 2: Real signal, 20/80",
+                                "Scenario 3: Real signal, 1/99", "Scenario 4: Noise, 50/50",
+                                "Scenario 5: Noise, 1/99")) +
+    theme(legend.position = "bottom") +
+    guides(fill = guide_legend(nrow=3, byrow=TRUE)) +
     scale_y_continuous(limits = c(0, 1.2), breaks = seq(0, 1, 0.1), labels = seq(0, 1, 0.1)) +
-    labs(title = toupper("Specificity for each scenario"),
-         y = toupper("Specificity"),
+    labs(title = toupper("Precision for each scenario"),
+         y = toupper("Precision"),
          x = toupper("Scenario")) +
-    theme(legend.position="none") +
     theme(text = element_text(size=20))
 ```
 
@@ -322,21 +378,27 @@ Formula:
 
 $$F1 = 2\frac{Precision*Recall}{Precision+Recall}$$
 
-
-```{r, echo=FALSE, fig.width= 7, fig.height=4, dev='svg', warning=FALSE, fig.align='center'}
+---
+```{r, echo=FALSE, fig.width= 9, fig.height=6.5, dev='svg', warning=FALSE, fig.align='center'}
 plot_df <- plot_df %>%
-  mutate(F1 = round(2*precision*sens/(precision+sens),2))
+  mutate(F1 = round((2*precision*sens)/(precision+sens),2))
 
 ggplot(plot_df, aes(x = scenario, y =F1, fill = scenario)) +
     geom_bar(stat = "identity") +
     geom_text(aes(label = F1), stat = "identity", vjust = -0.5, size = 12) +
     theme_bw() +
-    scale_fill_viridis(discrete = TRUE) +
+    scale_fill_viridis(discrete = TRUE,
+                       name="",
+                       breaks=c("scenario1", "scenario2", "scenario3", "scenario4", "scenario5"),
+                       labels=c("Scenario 1: Real signal, 50/50", "Scenario 2: Real signal, 20/80",
+                                "Scenario 3: Real signal, 1/99", "Scenario 4: Noise, 50/50",
+                                "Scenario 5: Noise, 1/99")) +
+    theme(legend.position = "bottom") +
+    guides(fill = guide_legend(nrow=3, byrow=TRUE)) +
     scale_y_continuous(limits = c(0, 1.2), breaks = seq(0, 1, 0.1), labels = seq(0, 1, 0.1)) +
     labs(title = toupper("F1 for each scenario"),
          y = toupper("F1"),
          x = toupper("Scenario")) +
-    theme(legend.position="none") +
     theme(text = element_text(size=20))
 ```
 
@@ -354,9 +416,7 @@ This looks like a crazy formula, but it's acctually just $\phi$, [the Person's p
 
 ---
 
-# MCC
-
-```{r, echo=FALSE, fig.width= 7, fig.height=3.5, dev='svg', warning=FALSE, fig.align='center'}
+```{r, echo=FALSE, fig.width= 9, fig.height=6.5, dev='svg', warning=FALSE, fig.align='center'}
 plot_df <- plot_df %>%
   mutate_each(funs(as.numeric), fp, fn, tn, tp) %>%
   mutate(mcc = round((tp*tn-fp*fn)/sqrt((tp+fp)*(tp+fn)*(tn+fp)*(tn+fn)),2))
@@ -365,12 +425,18 @@ ggplot(plot_df, aes(x = scenario, y =mcc, fill = scenario)) +
     geom_bar(stat = "identity") +
     geom_text(aes(label = mcc), stat = "identity", vjust = -0.5, size = 12) +
     theme_bw() +
-    scale_fill_viridis(discrete = TRUE) +
+    scale_fill_viridis(discrete = TRUE,
+                       name=" ",
+                       breaks=c("scenario1", "scenario2", "scenario3", "scenario4", "scenario5"),
+                       labels=c("Scenario 1: Real signal, 50/50", "Scenario 2: Real signal, 20/80",
+                                "Scenario 3: Real signal, 1/99", "Scenario 4: Noise, 50/50",
+                                "Scenario 5: Noise, 1/99")) +
+    theme(legend.position = "bottom") +
+    guides(fill = guide_legend(nrow=3, byrow=TRUE)) +
     scale_y_continuous(limits = c(0, 1), breaks = seq(0, 1, 0.1), labels = seq(0, 1, 0.1)) +
     labs(title = toupper("MCC for each scenario"),
          y = toupper("MCC"),
          x = toupper("Scenario")) +
-    theme(legend.position="none") +
     theme(text = element_text(size=20))
 ```
 
@@ -390,9 +456,7 @@ p_marginal(defaults) = (TP+FP)*(TP+FN)/N
 
 ---
 
-# Cohen's Kappa (you are better than random)
-
-```{r, echo=FALSE, fig.width= 7, fig.height=3.5, dev='svg', warning=FALSE, fig.align='center'}
+```{r, echo=FALSE, fig.width= 9, fig.height=6.5, dev='svg', warning=FALSE, fig.align='center'}
 plot_df <- plot_df %>%
   mutate(a_expected = ((tp+fn)*(tp+fp)+(fn+tn)*(fp+tn))/(tp+fp+tn+fn)^2,
          kappa = round((accuracy - a_expected)/(1-a_expected),2)) 
@@ -401,12 +465,18 @@ ggplot(plot_df, aes(x = scenario, y =kappa, fill = scenario)) +
     geom_bar(stat = "identity") +
     geom_text(aes(label = kappa), stat = "identity", vjust = -0.5, size = 12) +
     theme_bw() +
-    scale_fill_viridis(discrete = TRUE) +
+    scale_fill_viridis(discrete = TRUE,
+                       name="",
+                       breaks=c("scenario1", "scenario2", "scenario3", "scenario4", "scenario5"),
+                       labels=c("Scenario 1: Real signal, 50/50", "Scenario 2: Real signal, 20/80",
+                                "Scenario 3: Real signal, 1/99", "Scenario 4: Noise, 50/50",
+                                "Scenario 5: Noise, 1/99")) +
+    theme(legend.position = "bottom") +
+    guides(fill = guide_legend(nrow=3, byrow=TRUE)) +
     scale_y_continuous(limits = c(0, 1), breaks = seq(0, 1, 0.1), labels = seq(0, 1, 0.1)) +
-    labs(title = toupper("MCC for each scenario"),
-         y = toupper("MCC"),
+    labs(title = toupper("Kappa for each scenario"),
+         y = toupper("Kappa"),
          x = toupper("Scenario")) +
-    theme(legend.position="none") +
     theme(text = element_text(size=20))
 ```
 
@@ -448,9 +518,8 @@ background-image: url(http://www.exegetic.biz/blog/wp-content/uploads/2015/12/lo
 
 ---
 
-# Logloss
 
-```{r, echo=FALSE, fig.width= 7, fig.height=3.5, dev='svg', warning=FALSE, fig.align='center'}
+```{r, echo=FALSE, fig.width= 9, fig.height=6.5, dev='svg', warning=FALSE, fig.align='center'}
 plot_df2 <- data_with_pred %>%
   mutate(Class = as.numeric(ifelse(Class == "Class1", 1, 0))) %>%
   group_by(scenario) %>%
@@ -460,12 +529,18 @@ ggplot(plot_df2, aes(x = scenario, y =logloss, fill = scenario)) +
     geom_bar(stat = "identity") +
     geom_text(aes(label = logloss), stat = "identity", vjust = -0.5, size = 12) +
     theme_bw() +
-    scale_fill_viridis(discrete = TRUE) +
+    scale_fill_viridis(discrete = TRUE,
+                       name=" ",
+                       breaks=c("scenario1", "scenario2", "scenario3", "scenario4", "scenario5"),
+                       labels=c("Scenario 1: Real signal, 50/50", "Scenario 2: Real signal, 20/80",
+                                "Scenario 3: Real signal, 1/99", "Scenario 4: Noise, 50/50",
+                                "Scenario 5: Noise, 1/99")) +
+    theme(legend.position = "bottom") +
+    guides(fill = guide_legend(nrow=3, byrow=TRUE)) +
     scale_y_continuous(limits = c(0, 1), breaks = seq(0, 1, 0.1), labels = seq(0, 1, 0.1)) +
-    labs(title = toupper("MCC for each scenario"),
-         y = toupper("MCC"),
+    labs(title = toupper("Logloss for each scenario"),
+         y = toupper("Logloss"),
          x = toupper("Scenario")) +
-    theme(legend.position="none") +
     theme(text = element_text(size=20))
 ```
 
@@ -508,11 +583,18 @@ p1 <- ggplot(plot_df2, aes(x = specificity, y = sensitivity, color = scenario)) 
                      labels = seq(0, 1, 0.1)) +
   scale_x_continuous(breaks = seq(0, 1, 0.1),
                      labels = seq(0, 1, 0.1)) +
-  scale_color_viridis(discrete = TRUE) +
+  scale_color_viridis(discrete = TRUE,
+                       name="",
+                       breaks=c("scenario1", "scenario2", "scenario3", "scenario4", "scenario5"),
+                       labels=c("Scenario 1: Real signal, 50/50", "Scenario 2: Real signal, 20/80",
+                                "Scenario 3: Real signal, 1/99", "Scenario 4: Noise, 50/50",
+                                "Scenario 5: Noise, 1/99")) +
+  theme(legend.position = "bottom") +
+  guides(color = guide_legend(nrow=3, byrow=TRUE)) +
   labs(title = toupper("ROC curves for each scenario"),
          y = toupper("Sensitivity (aka, Recall, TPR, Hit Rate)"),
          x = toupper("1- Specificity (aka, False Alarm)")) +
-    theme(text = element_text(size=16)) +
+    theme(text = element_text(size=12)) +
   geom_abline(slope = 1, intercept = 0)
 
 #library(plotly)
