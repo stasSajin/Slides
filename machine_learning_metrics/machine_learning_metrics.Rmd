@@ -29,15 +29,6 @@ class: left, top
 
 .top[![50](https://static01.nyt.com/images/2016/09/08/upshot/arizona-election-forecast-1473366534539/arizona-election-forecast-1473366534539-videoSixteenByNineJumbo1600.png)]
 
-- use data that is biased 
-
-  * throwing away data that has missing values
-
-  * putting more weight on data that you "feel" should have more weight
-
-- being a tryhard
-  
-  * trying hard to look for a particular outcome without checks in place, to the point where it leads to overfitting.
 ---
 
 class: left, top
